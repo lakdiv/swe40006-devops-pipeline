@@ -1,7 +1,7 @@
 {
-  "name": "swe40006-devops-pipeline",
-  "version": "1.0.0",
-  "description": "",
+  "name": "fixlog",
+"version": "1.0.0",
+"description": "FixLog — maintenance request tracker for SWE40006 DevOps pipeline project",
   "main": "index.js",
  "scripts": {
   "start": "node src/server.js",

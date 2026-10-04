@@ -6,7 +6,7 @@ let items = [];
 let nextId = 1;
 
 app.get('/', (req, res) => {
-  res.send('<h1>TaskFlow</h1><p>SWE40006 DevOps Pipeline Project</p>');
+  res.send('<h1>FixLog</h1><p>Maintenance request tracker — SWE40006 DevOps Pipeline Project</p>');
 });
 
 app.get('/health', (req, res) => {
