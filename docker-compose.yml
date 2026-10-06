@@ -1,0 +1,28 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: fixlog
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      POSTGRES_DB: fixlog
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fixlog"]
+      interval: 5s
+      retries: 5
+
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgres://fixlog:${DB_PASSWORD:-changeme}@db:5432/fixlog
+      APP_VERSION: ${APP_VERSION:-dev}
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  dbdata:

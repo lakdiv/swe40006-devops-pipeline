@@ -1,18 +1,19 @@
 {
   "name": "fixlog",
-"version": "1.0.0",
-"description": "FixLog — maintenance request tracker for SWE40006 DevOps pipeline project",
+  "version": "1.0.0",
+  "description": "FixLog — maintenance request tracker for SWE40006 DevOps pipeline project",
   "main": "index.js",
- "scripts": {
-  "start": "node src/server.js",
-  "test": "jest"
-},
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "jest"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "pg": "^8.23.1"
   },
   "devDependencies": {
     "jest": "^30.5.2",
