@@ -28,6 +28,11 @@ describe('health', () => {
     expect(res.body.status).toBe('ok');
     expect(res.body.database).toBe('connected');
   });
+
+  test('reports the running version', async () => {
+    const res = await request(app).get('/health');
+    expect(res.body.version).toBeDefined();
+  });
 });
 
 describe('requests API', () => {
@@ -55,6 +60,13 @@ describe('requests API', () => {
     expect(list.body[0].description).toBe('Door sticking');
   });
 
+  test('returns requests newest first', async () => {
+    await request(app).post('/api/requests').send({ asset: 'Boiler', description: 'First' });
+    await request(app).post('/api/requests').send({ asset: 'Chiller', description: 'Second' });
+    const list = await request(app).get('/api/requests');
+    expect(list.body[0].description).toBe('Second');
+  });
+
   test('rejects a request with no asset', async () => {
     const res = await request(app).post('/api/requests').send({ description: 'Missing asset' });
     expect(res.statusCode).toBe(400);
@@ -63,6 +75,12 @@ describe('requests API', () => {
   test('rejects a request with no description', async () => {
     const res = await request(app).post('/api/requests').send({ asset: 'Boiler' });
     expect(res.statusCode).toBe(400);
+  });
+
+  test('rejects an empty request body', async () => {
+    const res = await request(app).post('/api/requests').send({});
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toBeDefined();
   });
 
   test('deletes an existing request', async () => {
@@ -86,5 +104,37 @@ describe('home page', () => {
     expect(res.statusCode).toBe(200);
     expect(res.text).toContain('FixLog');
     expect(res.text).toContain('version:');
+  });
+
+  test('shows an empty state when there are no requests', async () => {
+    const res = await request(app).get('/');
+    expect(res.text).toContain('No requests yet');
+  });
+
+  test('lists existing requests', async () => {
+    await request(app).post('/api/requests').send({ asset: 'Generator', description: 'Service due' });
+    const res = await request(app).get('/');
+    expect(res.text).toContain('Generator');
+    expect(res.text).toContain('Service due');
+  });
+});
+
+describe('metrics', () => {
+  test('exposes the prometheus endpoint', async () => {
+    const res = await request(app).get('/metrics');
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('text/plain');
+  });
+
+  test('publishes the request counter and duration histogram', async () => {
+    await request(app).get('/health');
+    const res = await request(app).get('/metrics');
+    expect(res.text).toContain('fixlog_http_requests_total');
+    expect(res.text).toContain('fixlog_http_request_duration_seconds');
+  });
+
+  test('includes default node process metrics', async () => {
+    const res = await request(app).get('/metrics');
+    expect(res.text).toContain('process_cpu_user_seconds_total');
   });
 });
