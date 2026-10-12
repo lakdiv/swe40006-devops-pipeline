@@ -2,7 +2,7 @@
   "name": "fixlog",
   "version": "1.0.0",
   "description": "FixLog — maintenance request tracker for SWE40006 DevOps pipeline project",
-  "main": "index.js",
+  "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
     "test": "jest"
@@ -11,6 +11,19 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "jest": {
+    "testEnvironment": "node",
+    "collectCoverage": true,
+    "collectCoverageFrom": ["src/**/*.js"],
+    "coveragePathIgnorePatterns": ["src/server.js"],
+    "coverageReporters": ["text", "lcov", "json-summary"],
+    "coverageThreshold": {
+      "global": {
+        "lines": 80,
+        "branches": 70
+      }
+    }
+  },
   "dependencies": {
     "express": "^5.2.1",
     "pg": "^8.23.1",
