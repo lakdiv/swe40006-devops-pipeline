@@ -1,0 +1,12 @@
+{
+  "name": "fixlog-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright end-to-end tests for FixLog, run against Staging",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1"
+  }
+}
