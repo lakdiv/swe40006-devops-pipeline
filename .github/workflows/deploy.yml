@@ -1,0 +1,113 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+env:
+  SHA: ${{ github.event.workflow_run.head_sha }}
+  DEPLOY_DIR: ~/swe40006-devops-pipeline/deploy
+
+jobs:
+  test-env:
+    name: Deploy to Test
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+            "bash ${{ env.DEPLOY_DIR }}/deploy.sh test $SHA"
+
+      - name: Wait for health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fs http://${{ secrets.EC2_HOST }}:8081/health > /dev/null; then
+              echo "Test environment healthy after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "Test environment did not become healthy"; exit 1
+
+  staging-env:
+    name: Deploy to Staging
+    needs: test-env
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+            "bash ${{ env.DEPLOY_DIR }}/deploy.sh staging $SHA"
+
+      - name: Wait for health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fs http://${{ secrets.EC2_HOST }}:8082/health > /dev/null; then
+              echo "Staging healthy after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "Staging did not become healthy"; exit 1
+
+  production:
+    name: Deploy to Production
+    needs: staging-env
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+            "bash ${{ env.DEPLOY_DIR }}/deploy.sh prod $SHA"
+
+      - name: Smoke test
+        id: smoke
+        run: |
+          for i in $(seq 1 30); do
+            BODY=$(curl -fs http://${{ secrets.EC2_HOST }}/health || true)
+            if echo "$BODY" | grep -q '"database":"connected"'; then
+              echo "Smoke test passed: $BODY"; exit 0
+            fi
+            sleep 2
+          done
+          echo "Smoke test failed"; exit 1
+
+      - name: Roll back to the last good version
+        if: failure() && steps.smoke.outcome == 'failure'
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+            'LAST=$(cat ~/state/prod.last_good); bash '"${{ env.DEPLOY_DIR }}"'/deploy.sh prod $LAST'
+          sleep 10
+          curl -fs http://${{ secrets.EC2_HOST }}/health
+          echo "Rolled back successfully"
