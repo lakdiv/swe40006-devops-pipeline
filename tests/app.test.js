@@ -138,3 +138,42 @@ describe('metrics', () => {
     expect(res.text).toContain('process_cpu_user_seconds_total');
   });
 });
+describe('form routes', () => {
+  test('creates a request from the form and redirects', async () => {
+    const res = await request(app)
+      .post('/requests')
+      .type('form')
+      .send({ asset: 'Chiller 2', description: 'Rattling' });
+
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toBe('/');
+
+    const list = await request(app).get('/api/requests');
+    expect(list.body).toHaveLength(1);
+    expect(list.body[0].asset).toBe('Chiller 2');
+  });
+
+  test('redirects without saving when the form is incomplete', async () => {
+    const res = await request(app)
+      .post('/requests')
+      .type('form')
+      .send({ asset: 'Boiler' });
+
+    expect(res.statusCode).toBe(302);
+
+    const list = await request(app).get('/api/requests');
+    expect(list.body).toEqual([]);
+  });
+
+  test('deletes a request from the form and redirects', async () => {
+    const created = await request(app)
+      .post('/api/requests')
+      .send({ asset: 'Pump 4', description: 'Seized' });
+
+    const res = await request(app).post(`/requests/${created.body.id}/delete`);
+    expect(res.statusCode).toBe(302);
+
+    const list = await request(app).get('/api/requests');
+    expect(list.body).toEqual([]);
+  });
+});
