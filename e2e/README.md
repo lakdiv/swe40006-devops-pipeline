@@ -1,28 +1,20 @@
-# End-to-end tests (owner: Rahul)
+# End-to-end tests
 
-Playwright tests that run against Staging in the Deploy workflow, after Staging is deployed.
+Playwright tests that run against Staging in the Deploy workflow, after Staging is deployed. The config is `playwright.config.js` in the repository root.
 
-| Test | Checks |
+| File | Covers |
 |---|---|
-| home page loads | The page returns 200 and shows the FixLog heading |
-| footer shows the deployed version | The footer shows the commit SHA that was just deployed |
-| health check reports the database as connected | `/health` returns `ok` with the database connected |
-| a new request appears on the home page | A request created through the API shows on the home page |
-| a request without a description is rejected | The API returns 400 for missing fields |
-| a deleted request is removed | Delete returns 204, the request leaves the list, a second delete returns 404 |
-| metrics endpoint exposes request counters | `/metrics` includes `fixlog_http_requests_total` |
-
-Each test cleans up the requests it creates.
+| `fixlog.spec.js` | The request form: logging, status, reload, validation, delete, plus `/health` and `/metrics` |
+| `deployment.spec.js` | The deployed version in the footer matches the commit SHA, plus the JSON API: create, validation (400), delete (204 then 404) |
 
 ## Run locally
 
-Needs Node.js 20 or later.
+From the repository root, with Node.js 20 or later:
 
 ```bash
-cd e2e
 npm ci
 npx playwright install --with-deps chromium
-BASE_URL=http://<server-ip>:8082 npx playwright test
+E2E_BASE_URL=http://<server-ip>:8082 npx playwright test
 ```
 
-The HTML report is written to `e2e/playwright-report/`.
+Set `EXPECTED_VERSION` to a commit SHA to check the footer shows that exact version. The HTML report is written to `playwright-report/`.

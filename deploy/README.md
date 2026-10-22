@@ -26,7 +26,7 @@ Each has its own database container and volume.
 `.github/workflows/deploy.yml` runs after CI passes on `main`:
 
 1. **Test**: copies this repository to the server and runs `deploy.sh test <sha>`
-2. **Staging**: runs `deploy.sh staging <sha>`, then the Playwright tests in `e2e/`
+2. **Staging**: runs `deploy.sh staging <sha>`, then the Playwright tests in `e2e/` (run from the root `playwright.config.js`)
 3. **Production**: waits for approval in the `production` environment, then runs `deploy.sh prod <sha>`
 
 It needs the `EC2_HOST` repository variable and the `EC2_SSH_KEY` repository secret.
