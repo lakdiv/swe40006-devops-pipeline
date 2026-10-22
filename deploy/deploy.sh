@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Deploys one FixLog environment from a GHCR image tag.
+# Deploys one FixLog environment from a GHCR image tag, then smoke tests it.
+# If the new version fails the smoke test, the last good version is restored.
 # Usage (as the deploy user):  bash deploy.sh <test|staging|prod> [image-tag]
 # With no tag, it uses the latest commit SHA on main, which CI uses as the image tag.
 # Creates ~/env/<env>.env with a random database password on first run.
@@ -28,6 +29,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="$HOME/env/$ENV_NAME.env"
 STATE_DIR="$HOME/state"
+LAST_GOOD_FILE="$STATE_DIR/$ENV_NAME.last_good"
 LOG_FILE="$HOME/logs/deploy.log"
 mkdir -p "$STATE_DIR" "$(dirname "$LOG_FILE")" "$HOME/env"
 chmod 700 "$HOME/env"
@@ -38,30 +40,59 @@ if [ ! -f "$ENV_FILE" ]; then
   echo "Created $ENV_FILE"
 fi
 
-export IMAGE_TAG
 COMPOSE=(docker compose -p "fixlog-$ENV_NAME" --env-file "$ENV_FILE"
          -f "$SCRIPT_DIR/compose.yml" -f "$SCRIPT_DIR/compose.$ENV_NAME.yml")
 
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [$ENV_NAME] $*" | tee -a "$LOG_FILE"; }
+
+start_app() {
+  export IMAGE_TAG="$1"
+  "${COMPOSE[@]}" up -d --no-deps --force-recreate app
+}
+
+# Smoke test: /health and the home page must both answer within 60 seconds
+smoke_test() {
+  for _ in $(seq 1 30); do
+    if curl -fs -m 2 -o /dev/null "http://localhost:$PORT/health" &&
+       curl -fs -m 2 -o /dev/null "http://localhost:$PORT/"; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
 
 docker network inspect monitoring >/dev/null 2>&1 || docker network create monitoring >/dev/null
 
 START=$(date +%s)
 log "START tag=$IMAGE_TAG"
 
-"${COMPOSE[@]}" pull app
+export IMAGE_TAG
+"${COMPOSE[@]}" pull app || log "WARN could not pull tag=$IMAGE_TAG, using a local image if there is one"
 "${COMPOSE[@]}" up -d --wait db
-"${COMPOSE[@]}" up -d --no-deps --force-recreate app
+start_app "$IMAGE_TAG"
 
-for _ in $(seq 1 60); do
-  if curl -fs -m 2 "http://localhost:$PORT/health" >/dev/null; then
-    END=$(date +%s)
-    log "HEALTHY tag=$IMAGE_TAG duration=$((END - START))s port=$PORT"
-    echo "$IMAGE_TAG" > "$STATE_DIR/$ENV_NAME.last_good"
-    exit 0
+if smoke_test; then
+  log "HEALTHY tag=$IMAGE_TAG duration=$(( $(date +%s) - START ))s port=$PORT"
+  echo "$IMAGE_TAG" > "$LAST_GOOD_FILE"
+  exit 0
+fi
+
+FAILED_AT=$(date +%s)
+log "FAILED tag=$IMAGE_TAG smoke test did not pass within 60s"
+
+PREVIOUS=""
+[ -f "$LAST_GOOD_FILE" ] && PREVIOUS="$(cat "$LAST_GOOD_FILE")"
+
+if [ -n "$PREVIOUS" ] && [ "$PREVIOUS" != "$IMAGE_TAG" ]; then
+  log "ROLLBACK to tag=$PREVIOUS"
+  start_app "$PREVIOUS"
+  if smoke_test; then
+    log "ROLLED_BACK tag=$PREVIOUS restored_in=$(( $(date +%s) - FAILED_AT ))s"
+  else
+    log "ROLLBACK_FAILED tag=$PREVIOUS"
   fi
-  sleep 2
-done
-
-log "FAILED tag=$IMAGE_TAG health check did not pass within 120s"
+else
+  log "No earlier good version to roll back to"
+fi
 exit 1

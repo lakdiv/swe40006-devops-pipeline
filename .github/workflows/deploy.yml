@@ -1,113 +1,118 @@
 name: Deploy
 
+# Runs after CI passes on main. The image CI built for that commit goes to
+# Test, then Staging (with the Playwright tests), then Production after approval.
 on:
   workflow_run:
-    workflows: ["CI"]
+    workflows: [CI]
     types: [completed]
     branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
 
 env:
-  SHA: ${{ github.event.workflow_run.head_sha }}
-  DEPLOY_DIR: ~/swe40006-devops-pipeline/deploy
+  IMAGE_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
+  EC2_HOST: ${{ vars.EC2_HOST }}
 
 jobs:
-  test-env:
+  test:
     name: Deploy to Test
-    if: github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    environment:
+      name: test
+      url: http://${{ vars.EC2_HOST }}:8081
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.IMAGE_TAG }}
 
       - name: Set up SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
 
-      - name: Deploy
-        run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
-            "bash ${{ env.DEPLOY_DIR }}/deploy.sh test $SHA"
+      - name: Copy deploy files to the server
+        run: rsync -az --delete --exclude .git --exclude node_modules -e "ssh -i ~/.ssh/id_deploy" ./ "deploy@$EC2_HOST:fixlog/"
 
-      - name: Wait for health
-        run: |
-          for i in $(seq 1 30); do
-            if curl -fs http://${{ secrets.EC2_HOST }}:8081/health > /dev/null; then
-              echo "Test environment healthy after ${i}s"; exit 0
-            fi
-            sleep 1
-          done
-          echo "Test environment did not become healthy"; exit 1
+      - name: Deploy and smoke test
+        run: ssh -i ~/.ssh/id_deploy "deploy@$EC2_HOST" "bash fixlog/deploy/deploy.sh test $IMAGE_TAG"
 
-  staging-env:
-    name: Deploy to Staging
-    needs: test-env
+  staging:
+    name: Deploy to Staging and run E2E tests
+    needs: test
     runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: http://${{ vars.EC2_HOST }}:8082
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.IMAGE_TAG }}
 
       - name: Set up SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
 
-      - name: Deploy
-        run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
-            "bash ${{ env.DEPLOY_DIR }}/deploy.sh staging $SHA"
+      - name: Copy deploy files to the server
+        run: rsync -az --delete --exclude .git --exclude node_modules -e "ssh -i ~/.ssh/id_deploy" ./ "deploy@$EC2_HOST:fixlog/"
 
-      - name: Wait for health
+      - name: Deploy and smoke test
+        run: ssh -i ~/.ssh/id_deploy "deploy@$EC2_HOST" "bash fixlog/deploy/deploy.sh staging $IMAGE_TAG"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install Playwright
         run: |
-          for i in $(seq 1 30); do
-            if curl -fs http://${{ secrets.EC2_HOST }}:8082/health > /dev/null; then
-              echo "Staging healthy after ${i}s"; exit 0
-            fi
-            sleep 1
-          done
-          echo "Staging did not become healthy"; exit 1
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Run end-to-end tests against Staging
+        env:
+          E2E_BASE_URL: http://${{ vars.EC2_HOST }}:8082
+          EXPECTED_VERSION: ${{ env.IMAGE_TAG }}
+        run: npx playwright test
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report
+          retention-days: 14
 
   production:
     name: Deploy to Production
-    needs: staging-env
+    needs: staging
     runs-on: ubuntu-latest
-    environment: production
+    environment:
+      name: production
+      url: http://${{ vars.EC2_HOST }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.IMAGE_TAG }}
+
       - name: Set up SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
 
-      - name: Deploy
-        run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
-            "bash ${{ env.DEPLOY_DIR }}/deploy.sh prod $SHA"
+      - name: Copy deploy files to the server
+        run: rsync -az --delete --exclude .git --exclude node_modules -e "ssh -i ~/.ssh/id_deploy" ./ "deploy@$EC2_HOST:fixlog/"
 
-      - name: Smoke test
-        id: smoke
-        run: |
-          for i in $(seq 1 30); do
-            BODY=$(curl -fs http://${{ secrets.EC2_HOST }}/health || true)
-            if echo "$BODY" | grep -q '"database":"connected"'; then
-              echo "Smoke test passed: $BODY"; exit 0
-            fi
-            sleep 2
-          done
-          echo "Smoke test failed"; exit 1
-
-      - name: Roll back to the last good version
-        if: failure() && steps.smoke.outcome == 'failure'
-        run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
-            'LAST=$(cat ~/state/prod.last_good); bash '"${{ env.DEPLOY_DIR }}"'/deploy.sh prod $LAST'
-          sleep 10
-          curl -fs http://${{ secrets.EC2_HOST }}/health
-          echo "Rolled back successfully"
+      - name: Deploy, smoke test and roll back on failure
+        run: ssh -i ~/.ssh/id_deploy "deploy@$EC2_HOST" "bash fixlog/deploy/deploy.sh prod $IMAGE_TAG"
