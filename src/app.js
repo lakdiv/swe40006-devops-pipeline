@@ -75,7 +75,7 @@ app.get('/', async (req, res) => {
 
         res.send(`${STYLES}<h1>FixLog</h1>
     
-      <p>Maintenance request tracker</p>
+      <p>Maintenance requests &mdash; Building L2</p>
       <form method="POST" action="/requests" data-testid="new-request">
         <input name="asset" placeholder="Asset" data-testid="asset-input" required>
         <input name="description" placeholder="What's wrong" data-testid="description-input" required>
